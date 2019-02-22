@@ -1,0 +1,508 @@
+# Gifted Identification Psychometrics Explorer
+
+library(shiny)
+library(ggplot2)
+library(mnormt)
+
+resetFlag <- 0
+
+ui <-  fluidPage(
+     # Application title
+    headerPanel("Gifted Identification Psychometrics Explorer"),
+    
+    # sliderInput bar colors set to match the plotted colors for Group 1 & Group 2
+    tags$style(HTML(".js-irs-0 .irs-single, .js-irs-0 .irs-bar-edge, .js-irs-0 .irs-bar {background: rgba(140, 140, 140, 1)}")),
+    
+    tags$style(HTML(".js-irs-1 .irs-single, .js-irs-1 .irs-bar-edge, .js-irs-1 .irs-bar {background: rgba(228, 26, 28, 0.7)}")),
+    tags$style(HTML(".js-irs-2 .irs-single, .js-irs-2 .irs-bar-edge, .js-irs-2 .irs-bar {background: rgba(228, 26, 28, 0.7)}")),
+    tags$style(HTML(".js-irs-3 .irs-single, .js-irs-3 .irs-bar-edge, .js-irs-3 .irs-bar {background: rgba(228, 26, 28, 0.7)}")),
+    tags$style(HTML(".js-irs-4 .irs-single, .js-irs-4 .irs-bar-edge, .js-irs-4 .irs-bar {background: rgba(228, 26, 28, 0.7)}")),
+    
+    tags$style(HTML(".js-irs-5 .irs-single, .js-irs-5 .irs-bar-edge, .js-irs-5 .irs-bar {background: rgba(55, 126, 184, 0.7)}")),
+    tags$style(HTML(".js-irs-6 .irs-single, .js-irs-6 .irs-bar-edge, .js-irs-6 .irs-bar {background: rgba(55, 126, 184, 0.7)}")),
+    tags$style(HTML(".js-irs-7 .irs-single, .js-irs-7 .irs-bar-edge, .js-irs-7 .irs-bar {background: rgba(55, 126, 184, 0.7)}")),
+    
+    fluidRow(
+      column(4,
+             sliderInput("r.test",
+                         "Test reliability",
+                         min = .00,
+                         max = .999,
+                         value = .95,
+                         step=.01),
+             
+             checkboxInput("valid_locked", 
+                           "Use equal nomination validity for both groups",
+                           value=TRUE),
+             
+             checkboxInput("nom_locked", 
+                           "Use equal nomination cutoffs for both groups",
+                           value=TRUE),
+             
+             checkboxInput("test_locked", 
+                           "Use equal test cutoffs for both groups",
+                           value=TRUE),
+             
+             checkboxInput("liveupdates", 
+                           "Real-time updates?",
+                           value=FALSE),
+             
+             actionButton("goButton", "Update"),
+             
+             actionButton("resetButton", "Reset"),
+             
+             # Include clarifying text ----
+             helpText("Note: All percentiles for nomination and test cutoff are defined relative to a mean ability of 100.",
+                      "This cutoff is used to calculate the sensitivity and incorrect",
+                      "classification rate for group 2 regardless of its test cutoff.")
+      ),
+             
+           
+
+    column(4,
+           sliderInput("mu1",
+                       "True population mean ability for group 1",
+                       min = 80,
+                       max = 120,
+                       value = 100,
+                       step=1),
+           
+            sliderInput("valid1",
+                       HTML("Nomination validity overall /<br>Nomination validity for group 1"),
+                       min = .00,
+                       max = .99,
+                       value = .6,
+                       step=.01),
+           
+            sliderInput("nom.cutoff1",
+                      "Nomination cutoff for group 1 \n(percentile)",
+                      min = .00,
+                      max = .99,
+                      value = .9,
+                      step=.005),
+      
+           sliderInput("t.cutoff1",
+                       HTML("Test cutoff overall /<br/>Test cutoff for group 1 (percentile)"),
+                       min = .5,
+                       max = .99,
+                       value = .9,
+                       step=.005)
+          
+    ),
+       
+       
+    
+    column(4, 
+           sliderInput("mu2",
+                       "True population mean ability for group 2",
+                       min = 80,
+                       max = 120,
+                       value = 100,
+                       step=1),
+           
+           conditionalPanel(
+             condition = "input.valid_locked == false",
+           sliderInput("valid2",
+                       HTML(" <br>Nomination validity for group 2"),
+                       min = .00,
+                       max = .99,
+                       value = .6,
+                       step=.01)),
+           
+           conditionalPanel(
+             condition = "input.nom_locked == false",
+               sliderInput("nom.cutoff2",
+                           "Nomination cutoff for group 2 \n(percentile)",
+                           min = .00,
+                           max = .99,
+                           value = .9,
+                           step=.005)),
+           
+           conditionalPanel(
+            condition = "input.test_locked == false",
+               sliderInput("t.cutoff2",
+                           HTML(" <br>Test cutoff for group 2\n(percentile)"),
+                           min = .5,
+                           max = .99,
+                           value = .9,
+                           step=.005))
+            )),
+    
+    fluidRow(
+      column(5,
+             tableOutput('summary')),
+  
+      column(7,
+             plotOutput("biasPlot")
+      )),
+           
+    fluidRow(
+      column(12,
+        helpText("(c) Matthew T. McBee, Dept. of Psychology, East Tennessee State University."), 
+        helpText("mcbeem@etsu.edu @TunnelofFire")  
+       )
+  
+   )
+
+)
+
+server <- function(input, output, session) {
+
+  calc.performance <-  function(r.test, valid1, valid2, t.cutoff1, t.cutoff2, nom.cutoff1, nom.cutoff2, mu1, mu2) {
+    
+    mu1 <- (mu1-100)/15
+    mu2 <- (mu2-100)/15
+    
+    nom.mu1 <- mu1*valid1
+    nom.mu2 <- mu2*valid2
+    
+    a11 = sqrt(r.test/(1-r.test))
+    #b11 = ((qnorm(t.cutoff1,0,1)-mu1) / sqrt(r.test))+mu1
+    b11 = ((qnorm(t.cutoff1,0,1)) / sqrt(r.test))
+    a21 = sqrt(((valid1^2)/r.test)/(1-((valid1^2)/r.test)))
+    b21 = ((qnorm(nom.cutoff1, 0, 1)*sqrt(r.test))/(valid1))
+    
+    #a11 = sqrt(r.test/(1-r.test))
+    #b11 = ((qnorm(t.cutoff1,0,1)-mu1) / sqrt(r.test))+mu1
+    #a21 = sqrt(((valid^2)/r.test)/(1-((valid^2)/r.test)))
+    #b21 = ((qnorm(nom.cutoff1, 0, 1)-mu1)/(valid/sqrt(r.test)))+mu1
+    
+    a12 = a11
+    #b12 = ((qnorm(t.cutoff2,0,1)-mu2) / sqrt(r.test))+mu2
+    b12 = ((qnorm(t.cutoff2,0,1)) / sqrt(r.test))
+    a22 = sqrt(((valid2^2)/r.test)/(1-((valid2^2)/r.test)))
+    b22 = ((qnorm(nom.cutoff2, 0, 1))/(valid2/sqrt(r.test)))
+    
+    # a12 = a11
+    # b12 = ((qnorm(t.cutoff2,0,1)-mu2) / sqrt(r.test))+mu2
+    # a22 = a21
+    # b22 = ((qnorm(nom.cutoff2, 0, 1)-mu2)/(valid/sqrt(r.test)))+mu2
+    
+    x <- seq(0,3, .025)
+    y1 <- pnorm(a11*(x-b11),0,1)*pnorm(a21*(x-b21),0,1)
+    y2 <- pnorm(a12*(x-b12),0,1)*pnorm(a22*(x-b22),0,1)
+    
+    cov1 <- matrix(c(
+      1, valid1/sqrt(1*r.test), sqrt(1), valid1/sqrt(1),
+      valid1/sqrt(1*r.test), 1, valid1/sqrt(r.test), sqrt(r.test),
+      sqrt(1), valid1/sqrt(r.test), 1, valid1,
+      valid1/sqrt(1), sqrt(r.test), valid1, 1),
+    nrow=4, ncol=4)
+    
+    cov2 <- matrix(c(
+      1, valid2/sqrt(1*r.test), sqrt(1), valid2/sqrt(1),
+      valid2/sqrt(1*r.test), 1, valid2/sqrt(r.test), sqrt(r.test),
+      sqrt(1), valid2/sqrt(r.test), 1, valid2,
+      valid2/sqrt(1), sqrt(r.test), valid2, 1),
+      nrow=4, ncol=4)
+    
+    # Sensitivity
+    
+    # cutoffs for group 1
+    tau_n1 <- qnorm(nom.cutoff1, 0, 1)
+    tau_t1 <- qnorm(t.cutoff1, 0, 1)
+    # cutoffs for group 2
+    tau_n2 <- qnorm(nom.cutoff2, 0, 1)
+    tau_t2 <- qnorm(t.cutoff2, 0, 1)
+    
+    # order:     n true, t true, n obs, t obs
+    means1 <- c(mu1, mu1, mu1*valid1, mu1*sqrt(r.test))
+    #means1 <- c(mu1, mu1, mu1*sqrt(valid), mu1*sqrt(r.test))
+    #means1 <- rep(mu1, 4)
+    
+    means2 <- c(mu2, mu2, mu2*valid2, mu2*sqrt(r.test))
+    #means2 <- c(mu2, mu2, mu2*sqrt(valid), mu2*sqrt(r.test))
+    #means2 <- rep(mu2, 4)
+    
+    sensitivity1 <-   sadmvn(lower=c(-5, tau_t1, tau_n1, tau_t1), upper=c(5,5,5,5), 
+                            mean=means1, 
+                            varcov=cov1, maxpts=10*100000)[[1]] /
+                     sadmvn(lower=c(-5, tau_t1, -5, -5), upper=c(5,5,5,5), 
+                            mean=means1, 
+                            varcov=cov1, maxpts=10*100000)[[1]]
+
+    sensitivity2 <-   sadmvn(lower=c(-5, tau_t1, tau_n2, tau_t2), upper=c(5,5,5,5), 
+                             mean=means2, 
+                            varcov=cov2, maxpts=10*100000)[[1]] /
+                     sadmvn(lower=c(-5, tau_t1, -5, -5), upper=c(5,5,5,5), 
+                            mean=means2, 
+                            varcov=cov2, maxpts=10*100000)[[1]]
+    
+    # incorrect identification rate
+    
+    IIR1 <- sadmvn(lower=c(-5, -5, tau_n1, tau_t1), upper=c(5, tau_t1, 5, 5), 
+                   mean=means1, varcov=cov1, maxpts=10*10000)[[1]] / 
+              sadmvn(lower=c(-5, -5, tau_n1, tau_t1), upper=c(5, 5, 5, 5), 
+                  mean=means1, varcov=cov1, maxpts=10*10000)[[1]]
+    
+    IIR2 <- sadmvn(lower=c(-5, -5, tau_n2, tau_t2), upper=c(5, tau_t1, 5, 5), 
+                   mean=means2, varcov=cov2, maxpts=10*10000)[[1]] / 
+      sadmvn(lower=c(-5, -5, tau_n2, tau_t2), upper=c(5, 5, 5, 5), 
+             mean=means2, varcov=cov2, maxpts=10*10000)[[1]]
+                                                                                      
+    # proportion identified
+    
+    pID1 <- sadmvn(lower=c(-5, -5, tau_n1, tau_t1), upper=c(5, 5, 5, 5),
+                   mean=means1, varcov=cov1, maxpts=10*100000)[[1]]
+    
+    pID2 <- sadmvn(lower=c(-5, -5, tau_n2, tau_t2), upper=c(5, 5, 5, 5),
+                   mean=means2, varcov=cov2, maxpts=10*100000)[[1]]
+    
+    passrate1 <-  sadmvn(lower=c(-5, -5, tau_n1, tau_t1), upper=c(5,5,5,5), 
+                    mean=means1, varcov=cov1, maxpts=10*100000)[[1]] /
+                  sadmvn(lower=c(-5, -5, tau_n1, -5), upper=c(5,5,5,5), 
+                     mean=means1, varcov=cov1, maxpts=10*100000)[[1]]
+    
+    passrate2 <-  sadmvn(lower=c(-5, -5, tau_n2, tau_t2), upper=c(5,5,5,5), 
+                         mean=means2, varcov=cov2, maxpts=10*100000)[[1]] /
+                  sadmvn(lower=c(-5, -5, tau_n2, -5), upper=c(5,5,5,5), 
+                        mean=means2, varcov=cov2, maxpts=10*100000)[[1]]
+    
+    # nomination pass rate
+    
+    return(list(x=x, y1=y1, y2=y2, sensitivity1=round(sensitivity1,3), 
+                sensitivity2=round(sensitivity2,3), IIR1=round(IIR1, 3), 
+                IIR2=round(IIR2, 3), pID1=round(pID1,3), pID2=round(pID2, 3),
+                passrate1=round(passrate1, 3), passrate2=round(passrate2, 3)))
+  }
+  
+   output$biasPlot <- renderPlot({
+   
+   # Take a dependency on input$goButton
+   input$goButton  
+
+   # reset all the sliders when the reset button is pressed
+     # based on detecting an increment of the value of 
+     # input$resetButton, which increments by 1 each time it is pressed
+     observe({
+       if (input$resetButton > resetFlag)
+       isolate({
+         updateSliderInput(session, "r.test", value = .95)
+         updateSliderInput(session, "valid1", value = .6)
+         updateSliderInput(session, "valid2", value = .6)
+
+         updateSliderInput(session, "nom.cutoff1", value = .9)
+         updateSliderInput(session, "nom.cutoff2", value = .9)
+         updateSliderInput(session, "mu1", value = 100)
+         updateSliderInput(session, "mu2", value = 100)
+         updateSliderInput(session, "t.cutoff1", value = .9)
+         updateSliderInput(session, "t.cutoff2", value = .9)
+         resetFlag <<- input$resetButton
+        })
+      })
+     
+    
+     
+     # read all inputs
+     
+     # this is a work-around. currently one cannot supply manual tick mark values to inputSlider
+     # these values cannot be zero, but if you set the min value of the slider to .01, all the tick
+     # marks are .11, .21, .31, etc.
+     # So I allowed users to set values of zero for these sliders
+     # but this code replaces those zeros with small nonzero quantities prior to calculation
+     valid1 <- isolate(ifelse(input$valid1>0, input$valid1, .000001))
+     valid2 <- isolate(ifelse(input$valid2>0, input$valid2, .000001))
+     r.test <- isolate(ifelse(input$r.test>0, input$r.test, .000001))
+     nom.cutoff1 <- isolate(ifelse(input$nom.cutoff1>0, input$nom.cutoff1, .000001))
+     nom.cutoff2 <- isolate(ifelse(input$nom.cutoff2>0, input$nom.cutoff2, .000001))
+     t.cutoff1 <- isolate(input$t.cutoff1)
+     t.cutoff2 <- isolate(input$t.cutoff2)
+     mu1 <- isolate(input$mu1)
+     mu2 <- isolate(input$mu2)
+     
+     if (input$liveupdates==TRUE) {
+      input$valid1
+      input$valid2
+      input$r.test
+      input$nom.cutoff1
+      input$nom.cutoff2
+      input$t.cutoff1
+      input$t.cutoff2
+      input$mu1
+      input$mu2
+      input$test_locked
+      input$nom_locked
+      input$liveupdates
+     }
+     
+     validate(
+       need(valid1 <= sqrt(r.test), paste("The nomination validity for group 1 cannot exceed the square root of the test reliability.
+In such a case, the implied correlation between the nomination and test true scores exeeds 1.0. 
+For the current setting of test reliability, the maximum nomination validity is ", round(sqrt(r.test),2), ". ",
+"Please increase test reliability or decrease nomination validity for Group 1.", sep=""))
+     )
+     
+     validate(
+       need(valid2 <= sqrt(r.test), paste("The nomination validity for group 2 cannot exceed the square root of the test reliability.
+In such a case, the implied correlation between the nomination and test true scores exeeds 1.0. 
+For the current setting of test reliability, the maximum nomination validity is ", round(sqrt(r.test),2), ". ",
+                                          "Please increase test reliability or decrease nomination validity for Group 2.", sep=""))
+     )
+     
+
+    
+    # if the $locked checkbox is checked, use input$t.cutoff1's value for both t.cutoff1 and t.cutoff2
+    #  while checked, update slider t.cutoff2's value with t.cutoff1's value
+ 
+    if (isolate(input$valid_locked)==TRUE) {
+       updateSliderInput(session, "valid2", value = valid1)
+       valid2 <- valid1
+     } else {
+       valid2 <- valid2
+     }
+     
+    if (isolate(input$test_locked)==TRUE) {
+      updateSliderInput(session, "t.cutoff2", value = t.cutoff1)
+      t.cutoff2 <- t.cutoff1
+    } else {
+      t.cutoff2 <- t.cutoff2
+    }
+    
+    if (isolate(input$nom_locked)==TRUE) {
+      updateSliderInput(session, "nom.cutoff2", value = nom.cutoff1)
+      nom.cutoff2 <- nom.cutoff1 
+    } else {
+      nom.cutoff2 <- nom.cutoff2 
+    }
+    
+     performance <-  calc.performance(r.test=r.test, valid1=valid1, valid2=valid2, 
+                          t.cutoff1=t.cutoff1, t.cutoff2=t.cutoff2, nom.cutoff1=nom.cutoff1, 
+                        nom.cutoff2=nom.cutoff2, mu1=mu1, mu2=mu2)
+     
+     # convert the ICC data to a data frame for ggplot
+      data <- data.frame(
+        cbind(
+          rep(performance$x, 2),
+          c(performance$y1, performance$y2),
+          c(rep(1, length(performance$x)), rep(2, length(performance$x)))))
+      
+      names(data) <- c("x", "y", "group")
+      
+      data$group <- factor(data$group)
+      
+      # create the normal curve data frame to add to the plot
+      x <- rep(seq(1, 145, 2),2)
+      ncurve <- data.frame(
+        cbind(
+            rep(x,2),
+            c(dnorm(x, mu1, 15), dnorm(x, mu2, 15)),
+            rep(c(1,2), each=length(x))
+        )
+      )
+      names(ncurve) <- c("x", "y", "group")
+      
+       ncurve <- rbind(ncurve,
+                       c(0, 0, 1),
+                       c(0, 0, 2),
+                        ncurve,
+                       c(145, 0, 1),
+                       c(145, 0, 2))
+       
+       # make the plot
+            
+      p <- ggplot(data=data, aes(x=(x*15)+100, y=y, col=factor(group)))+geom_line()+
+        geom_polygon(data=ncurve, aes(x=x, y=y*32, col=NULL, fill=factor(group)), 
+                     show.legend = FALSE, alpha=.15)+
+       guides(fill=FALSE, colour=guide_legend(keywidth = 3, keyheight = 1.5))+
+        theme_classic()+
+        coord_cartesian(xlim=c(100,145), ylim=c(0,1.1))+
+        theme(legend.position="bottom",
+              text=element_text(size=15),
+              plot.title = element_text(hjust = 0.5))+
+        scale_color_brewer(palette="Set1")+
+        labs(title="Conditional probability of identification",
+             col="Group")+
+        scale_y_continuous(breaks=seq(0,1, .1))+
+        scale_x_continuous(breaks=seq(100,145, 5))+
+        xlab("True ability")+ylab("Probability of identification")+
+        geom_vline(xintercept=qnorm(c(.6, .7, .8, .9, .95, .975, .99), 100, 15), 
+                   linetype="dashed", alpha=.25)+
+        geom_vline(xintercept=qnorm(t.cutoff1, 100, 15), 
+                  linetype="dashed", alpha=.7, size=.9)+ #  col="#984ea3"
+        
+        geom_hline(yintercept=seq(0,1,.1), linetype="dotted", alpha=.15)+
+        annotate("text", x = qnorm(.6, 100, 15), y = 1.08, label = "60th\n%ile",
+                 fontface="bold", size=4)+
+        annotate("text", x = qnorm(.7, 100, 15), y = 1.08, label = "70th\n%ile",
+                 fontface="bold", size=4)+
+        annotate("text", x = qnorm(.8, 100, 15), y = 1.08, label = "80th\n%ile",
+                 fontface="bold", size=4)+
+        annotate("text", x = qnorm(.9, 100, 15), y = 1.08, label = "90th\n%ile",
+                 fontface="bold", size=4)+
+        annotate("text", x = qnorm(.95, 100, 15), y = 1.08, label = "95th\n%ile",
+                 fontface="bold", size=4)+
+        annotate("text", x = qnorm(.975, 100, 15), y = 1.08, label = "97.5th\n%ile",
+                fontface="bold", size=4)+
+        annotate("text", x = qnorm(.99, 100, 15), y =1.08, label = "99th\n%ile",
+                 fontface="bold", size=4)
+     
+      
+   
+      # p <- ggplot(data=data, aes(x=(x*15)+100, y=y, col=group))+geom_line()+theme_classic()+
+      #   coord_cartesian(xlim=c(100,145), ylim=c(0,1))+
+      #   theme(legend.position="bottom",
+      #         text=element_text(family="Times New Roman", size=16),
+      #         plot.title = element_text(hjust = 0.5))+
+      #   labs(col="Group")+
+      #   scale_color_brewer(palette="Set1")+
+      #   labs(shape="Cutoff percentile",
+      #        #title=paste("Bias statistic:", round(performance$bias,3)))+
+      #        title="Conditional probability of identification by group and true ability")+
+      #   scale_y_continuous(breaks=seq(0,1, .1))+
+      #   scale_x_continuous(breaks=seq(100,145, 5))+
+      #   xlab("True ability")+ylab("probability of identification")+
+      #   geom_vline(xintercept=qnorm(c(.6, .7, .8, .9, .95, .975, .99), 100, 15), linetype="dashed", alpha=.25)+
+      #   geom_hline(yintercept=seq(0,1,.1), linetype="dotted", alpha=.15)+
+      #   annotate("text", x = qnorm(.6, 100, 15), y = .98, label = "60th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)+
+      #   annotate("text", x = qnorm(.7, 100, 15), y = .98, label = "70th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)+
+      #   annotate("text", x = qnorm(.8, 100, 15), y = .98, label = "80th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)+
+      #   annotate("text", x = qnorm(.9, 100, 15), y = .98, label = "90th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)+
+      #   annotate("text", x = qnorm(.95, 100, 15), y = .98, label = "95th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)+
+      #   annotate("text", x = qnorm(.975, 100, 15), y = .98, label = "97.5th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)+
+      #   annotate("text", x = qnorm(.99, 100, 15), y = .98, label = "99th\n%ile",
+      #            family="Times New Roman", fontface="bold", size=5)
+      # 
+      
+      print(p)
+      
+      summary.stat <- data.frame(matrix(
+        c("Sensitivity", performance$sensitivity1, performance$sensitivity2, 
+            paste(round((performance$sensitivity2-performance$sensitivity1)/performance$sensitivity1,3)*100,"%", sep=""),
+          "Incorrect Identification Rate", performance$IIR1, performance$IIR2, 
+          paste(round((performance$IIR2-performance$IIR1)/performance$IIR1,3)*100,"%", sep=""),
+          "Percent Identified", paste(performance$pID1*100, "%", sep=""), 
+          paste(performance$pID2*100, "%", sep=""), 
+          paste(round((performance$pID2-performance$pID1)/performance$pID1,3)*100, "%", sep=""),
+          "Nomination Pass Rate", paste(performance$passrate1*100, "%", sep=""), paste(performance$passrate2*100, "%", sep=""),
+          paste(round((performance$passrate2-performance$passrate1)/performance$passrate1,3)*100,"%", sep="")),
+        ncol=4, byrow=T))
+      
+      names(summary.stat) <- c("", "Group 1", "Group 2", "Difference 2 vs 1")
+      
+      output$summary <- renderTable({
+        
+        validate(
+          need(valid1 < sqrt(r.test), "")
+          )
+        
+        validate(
+          need(valid2 < sqrt(r.test), "")
+        )
+        
+        summary.stat
+        
+      })
+      
+    
+   })
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
+
